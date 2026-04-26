@@ -1,0 +1,250 @@
+===============================================================================
+  VIETNAM STOCK PORTFOLIO OPTIMIZER — HANDOVER DOCUMENT
+  For: UI/UX Designer & Frontend Developer
+  Date: 2026-04-26
+  Repo owner: Tathao1t1
+===============================================================================
+
+SECTION 1 — PROJECT OVERVIEW
+──────────────────────────────
+This is a quantitative portfolio optimization engine for Vietnamese stocks
+listed on HOSE/HNX. Given a user's target annual return r*, the system
+computes the minimum-variance portfolio that hits that target — i.e., the
+portfolio with the lowest possible risk for the investor's desired return.
+
+The mathematical stack is built entirely in linear algebra:
+  • EWMA covariance estimation  (exponentially-weighted moving average)
+  • Eigendecomposition           Σ = QΛQᵀ
+  • James-Stein μ shrinkage      reduces estimation error in expected returns
+  • L2 / Tikhonov regularization Σ_reg = Σ + λI  (prevents extreme weights)
+  • Quadratic Program (QP)       min wᵀΣ_reg w  s.t. μᵀw = r*, 1ᵀw = 1, 0≤wᵢ≤0.15
+
+The optimizer is NOT a black-box ML model. Every number is traceable back to
+a closed-form linear algebra formula — this is an explicit design choice.
+
+Do NOT integrate any external "AI prediction" for expected returns. The
+expected returns μ are computed solely from EWMA of historical log-returns.
+
+
+SECTION 2 — REPOSITORY LAYOUT
+──────────────────────────────
+LinearProject/
+├── LinearCode.ipynb              Main Jupyter notebook (the full engine)
+└── portfolio_data/
+    ├── raw/
+    │   └── prices/               Raw daily closing prices (one CSV per ticker)
+    └── processed/                Pre-computed artifacts (updated nightly or on demand)
+        ├── meta.json             Metadata — tickers, dates, parameters
+        ├── prices.npy            Price matrix  [T × N]  float64
+        ├── returns.npy           Log-return matrix [T-1 × N]  float64
+        ├── mu.npy                EWMA expected annual returns [N]  float64
+        ├── sigma.npy             EWMA covariance matrix [N × N]  float64
+        ├── eigenvalues.npy       Λ diagonal [N]  float64  (sorted desc)
+        ├── eigenvectors.npy      Q matrix [N × N]  float64
+        └── dates.npy             Date strings [T-1]  str  (index for returns)
+
+
+SECTION 3 — KEY PARAMETERS (currently hard-coded in the notebook)
+──────────────────────────────────────────────────────────────────
+  HALFLIFE     = 252      trading days  (EWMA decay; 1 year)
+  LAMBDA_REG   = 0.05     L2 regularisation strength
+  ALPHA_MIN    = 0.05     minimum James-Stein shrinkage factor (floor)
+  RFR          = 0.045    risk-free rate (4.5% p.a., Vietnamese T-bill proxy)
+  CAP_WEIGHT   = 0.15     maximum weight per ticker (15%)
+  FFILL_LIMIT  = 5        max consecutive days to forward-fill price gaps
+
+These should be surfaced as advanced/developer settings, NOT exposed to the
+end investor in the main UI.
+
+
+SECTION 4 — API CONTRACT (what the backend exposes)
+──────────────────────────────────────────────────────
+The UI should call a thin wrapper around the optimizer. The interface is:
+
+  INPUT  (from user):
+    r_target  : float  — target annual return (e.g. 0.15 for 15%)
+
+  OUTPUT (from optimizer — all derived on-the-fly from processed/ artifacts):
+    weights   : dict[ticker → float]      portfolio weights (sum to 1)
+    port_vol  : float                     annualized portfolio volatility
+    port_ret  : float                     annualized expected return
+    sharpe    : float                     (port_ret − RFR) / port_vol
+    n_eff     : float                     effective number of stocks (1/HHI)
+    zone      : str                       "reliable" | "caution"
+    ret_gmv   : float                     min achievable return (lower bound)
+    ret_max   : float                     max reliable-zone return (upper bound)
+    frontier  : list[{ret, vol, sharpe}]  full efficient frontier points
+
+  VALIDATION:
+    The UI must enforce:    ret_gmv ≤ r_target ≤ ret_max_caution
+    Display warning if:     r_target > ret_reliable_max  (caution zone)
+    Hard reject if:         r_target < ret_gmv  OR  r_target > ret_max_caution
+
+  The optimizer enforces per-stock cap (≤15%) and long-only (wᵢ ≥ 0)
+  automatically — no need to re-validate these in the UI.
+
+
+SECTION 5 — RELIABLE ZONE vs CAUTION ZONE
+───────────────────────────────────────────
+This is the single most important concept for UI communication:
+
+  N_eff = 1 / Σwᵢ²   (effective number of positions, Herfindahl-Hirschman)
+
+  • N_eff ≥ 3  →  RELIABLE ZONE   (optimizer is well-conditioned)
+  • N_eff < 3  →  CAUTION ZONE    (portfolio is concentrated; math is correct
+                                   but input μ uncertainty dominates)
+
+The math (QP, eigendecomposition) is ALWAYS correct. The caution zone flag
+means the estimated expected returns (μ) are unreliable for high targets,
+NOT that the portfolio calculation itself has a bug.
+
+  ret_reliable_max  = highest r_target where N_eff ≥ 3
+  ret_caution_max   = maximum r_target the optimizer can reach (hard limit)
+
+Suggested UI language:
+  Reliable zone:  "Portfolio is well-diversified. Proceed with confidence."
+  Caution zone:   "High return target leads to concentrated positions.
+                   Historical returns may not reflect future performance."
+
+
+SECTION 6 — CURRENT UNIVERSE (39 Vietnamese tickers)
+──────────────────────────────────────────────────────
+ANV, BIC, BID, BMI, CII, CMG, CSV, CTD, DBC, DGW, DPM, DXG, ELC, FPT,
+GAS, GIL, HAH, HAX, HCM, HPG, IMP, KDC, KDH, LCG, LSS, MBB, NKG, PC1,
+PNJ, PVT, REE, SAB, SSI, STK, TCM, VCB, VCI, VIC, VSC
+
+Exchange: HOSE / HNX (Vietnam)
+Data range: 2018-01-03 → 2026-04-24  (T = 2090 trading days)
+Risk-free rate: 4.5% p.a. (Vietnamese government bond proxy)
+
+Note: The portfolio_data/processed/ files are snapshots. They need to be
+regenerated when new price data is fetched. The notebook Step 1–5 pipeline
+does this automatically — wire it to a daily cron job.
+
+
+SECTION 7 — KNOWN LIMITATIONS (communicate to end user)
+─────────────────────────────────────────────────────────
+1. BACKWARD-LOOKING μ: Expected returns are purely based on EWMA of past
+   log-returns. They do not incorporate analyst forecasts, macro signals,
+   or forward-looking data. Past performance ≠ future results.
+
+2. ARITHMETIC ANNUALIZATION: Daily μ_annual = daily_mean × 252.
+   This is a linear approximation. For log returns over long horizons,
+   geometric compounding (exp(252·μ_daily) − 1) is more precise but was
+   intentionally kept simple to match the linear algebra scope.
+
+3. UNIVERSE IS FIXED: Only these 39 tickers. No dynamic inclusion/exclusion.
+
+4. COVARIANCE USES 2018–2026 DATA: EWMA half-life = 252 days means data
+   from 2018 has < 0.01% weight. The "ghost regime" of old market structure
+   is effectively eliminated. But the 2020 COVID crash is still in the window.
+
+5. TRANSACTION COSTS NOT MODELLED: The optimizer ignores bid-ask spreads,
+   brokerage fees (typ. 0.15–0.25% on Vietnamese exchanges), or turnover.
+   For a practical tool, add a turnover constraint or cost term.
+
+6. THIS IS NOT FINANCIAL ADVICE. Present prominent disclaimer in the UI.
+
+
+SECTION 8 — RECOMMENDED UI FLOW
+─────────────────────────────────
+Screen 1 — Input:
+  • Brief explanation of what the tool does (1–2 sentences)
+  • Slider or input field:  "Target annual return"
+    Range: [ret_gmv ... ret_caution_max]  displayed as percentages
+    Color-coded: green for reliable zone, amber/red for caution zone
+  • Display:  ret_gmv and ret_reliable_max as reference markers on the slider
+  • "Optimize" button
+
+Screen 2 — Results:
+  • Portfolio weights: horizontal bar chart (sorted descending)
+    Overlay: 1/N equal-weight as a grey reference bar
+  • Key metrics card:
+      Expected Return: XX.X%
+      Portfolio Volatility: XX.X%
+      Sharpe Ratio: X.XX
+      N_eff (effective positions): X.X
+      Zone: [RELIABLE ✓] or [CAUTION ⚠]
+  • Efficient frontier chart:
+      X-axis: annualized volatility (%)
+      Y-axis: annualized return (%)
+      Scatter: color-coded by Sharpe ratio (viridis colormap)
+      Mark: user's chosen portfolio with a star/pin
+      Shade caution zone differently
+
+Screen 3 (optional) — Walk-Forward Performance:
+  • Cumulative return chart: Min-Var portfolio vs 1/N equal-weight
+    Training period: 2018–2023  |  Out-of-sample: 2024–2026
+  • Brief explanation of what walk-forward means
+
+Footer (every screen):
+  ⚠ This tool is for educational purposes only. Not financial advice.
+    Past performance does not guarantee future returns.
+
+
+SECTION 9 — TECHNICAL STACK SUGGESTIONS
+─────────────────────────────────────────
+Backend (optimizer engine):
+  • Python 3.10+  with numpy, scipy, pandas
+  • Expose via FastAPI  (lightweight, async, auto-generates OpenAPI docs)
+  • Endpoint:  POST /optimize  { r_target: 0.15 }
+  • Endpoint:  GET  /meta      (returns ticker list, date range, zone bounds)
+  • Endpoint:  GET  /frontier  (returns full frontier, no target needed)
+
+Frontend:
+  • React or Next.js  (the team's choice)
+  • Charting: Recharts, Plotly.js, or Victory (all handle scatter + bar well)
+  • Styling: Tailwind CSS recommended (fast iteration)
+
+Data pipeline:
+  • VNDirect or SSI API for daily price data  (replace manual CSV)
+  • Nightly cron:  run LinearCode.ipynb Steps 1–5 → overwrite processed/
+
+Deployment:
+  • Backend: Docker container on any VPS (DigitalOcean, AWS Lightsail, etc.)
+  • Frontend: Vercel or Netlify (free tier sufficient for a demo)
+
+
+SECTION 10 — BUGS FIXED (do not revert)
+──────────────────────────────────────────
+Three bugs were found and patched during the last review session:
+
+BUG 1 (CRITICAL) — Simple vs Log Returns:
+  Cell cde53584 previously used pct_change() (simple returns ΔP/P).
+  FIXED to: R = np.log(prices_clean / prices_clean.shift(1)).dropna()
+  Same fix applied in build_processed (cell dc865551).
+  All documentation and math assumes log returns — this was a mismatch.
+
+BUG 2 (CRITICAL) — James-Stein shrinkage factor wrong by factor 252:
+  Cell 591b01ab: avg_var was computed without ×252 annualization factor.
+  FIXED: avg_var = 252 * np.mean(np.diag(Sigma)) / T_eff
+  With old formula: alpha ≈ 0.99 (almost no shrinkage — JS was a no-op).
+  With correct formula: alpha → 0 (full shrinkage, potential degeneracy).
+  Added ALPHA_MIN = 0.05 floor to prevent degenerate equal-mu collapse.
+
+BUG 3 — T/N ratio displayed raw instead of effective:
+  Previously showed T_raw/N ≈ 48.7 (falsely reassuring).
+  FIXED to also display T_eff/N ≈ 9.3 (the number relevant for condition).
+
+
+SECTION 11 — OPEN QUESTIONS / FUTURE WORK
+───────────────────────────────────────────
+• James-Stein shrinkage is NOT applied in the walk-forward (Layer 3) test.
+  This is an inconsistency — the walk-forward uses raw μ while the demo uses
+  JS-shrunken μ. Low priority for UI but should be noted.
+
+• Geometric vs arithmetic annualization: a toggle could be offered to
+  sophisticated users (exp(252·μ) vs 252·μ).
+
+• The stock universe is hard-coded. A future enhancement would let the user
+  select a subset or add custom tickers (requires data pipeline changes first).
+
+• Transaction cost modelling would make the tool more production-realistic.
+
+• Currency: all returns are in VND terms. No FX adjustment for non-VND users.
+
+===============================================================================
+  Questions? The math is fully documented inside LinearCode.ipynb —
+  each step has a markdown cell explaining the formula in both symbolic
+  and intuitive form. Read the notebook top-to-bottom before asking.
+===============================================================================
