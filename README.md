@@ -128,3 +128,7 @@ LinearProject/
 - Transaction costs and market impact are not modelled
 - Universe is fixed; no dynamic inclusion or exclusion of tickers
 - This is an academic project — **not financial advice**
+
+## Future improvement
+- Integreate sentiment analysis modeling
+- Intergrate prediction models utilizing deep learning models for time series data prediction
