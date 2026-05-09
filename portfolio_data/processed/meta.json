@@ -38,17 +38,22 @@
     "VCB",
     "VCI",
     "VIC",
-    "VSC"
+    "VSC",
+    "GLD",
+    "AGG",
+    "EMB",
+    "VNM"
   ],
-  "n_tickers": 39,
+  "n_tickers": 43,
   "t_days": 2090,
   "date_start": "2018-01-03",
   "date_end": "2026-04-24",
   "risk_free_rate": 0.045,
-  "t_n_ratio": 53.59,
-  "n_signal_factors": 39,
-  "n_noise_factors": 0,
+  "t_n_ratio": 48.6,
+  "n_signal_factors": 5,
+  "n_noise_factors": 38,
   "halflife": 252,
   "ewma": true,
-  "last_updated": "2026-04-25T23:33:39"
+  "last_updated": "2026-05-09T12:45:57",
+  "extension_note": "Added GLD (gold), AGG (simulated fixed-income due to VN bond data scarcity), EMB (EM bond ETF holding VN govt bonds), VNM (Vietnam USD ETF) \u2014 all converted to VND via USDVND=X"
 }

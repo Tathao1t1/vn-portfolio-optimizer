@@ -194,6 +194,25 @@ div[data-testid="stTabs"] button[aria-selected="true"]{
 
 /* Metric description */
 .metric-desc{font-size:11px;color:var(--gray);margin-top:6px;line-height:1.55;padding:0 2px;}
+
+/* Chart entrance animation */
+@keyframes fadeSlideUp{
+  from{opacity:0;transform:translateY(18px);}
+  to{opacity:1;transform:translateY(0);}
+}
+@keyframes fadeIn{
+  from{opacity:0;}
+  to{opacity:1;}
+}
+[data-testid="stPlotlyChart"]{
+  animation:fadeSlideUp .55s cubic-bezier(.22,.68,0,1.2) both;
+}
+div[data-testid="stMetric"]{
+  animation:fadeSlideUp .45s cubic-bezier(.22,.68,0,1.2) both;
+}
+div[data-testid="stMetric"]:nth-child(2){animation-delay:.07s;}
+div[data-testid="stMetric"]:nth-child(3){animation-delay:.14s;}
+div[data-testid="stMetric"]:nth-child(4){animation-delay:.21s;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -242,7 +261,15 @@ def load_data():
         sig = np.load(DATA_DIR / "sigma.npy")
         ev  = np.load(DATA_DIR / "eigenvalues.npy")
         evc = np.load(DATA_DIR / "eigenvectors.npy")
-        return meta, meta["tickers"], mu, sig, ev, evc, True
+        # Slice to 39 VN tickers only (VN stocks are always first in the matrix)
+        tickers = meta["tickers"][:39]
+        mu  = mu[:39]
+        sig = sig[:39, :39]
+        ev, evc = np.linalg.eigh(sig)
+        idx = np.argsort(ev)[::-1]
+        ev, evc = ev[idx], evc[:, idx]
+        meta = {**meta, "tickers": tickers, "n_tickers": 39}
+        return meta, tickers, mu, sig, ev, evc, True
     except Exception:
         n = 39
         np.random.seed(42)
@@ -438,8 +465,15 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
+    # Dynamic slider bounds from GMV and frontier
+    _gmv = compute_gmv()
+    _slider_min = max(4, int((_gmv["port_ret"] if _gmv else 0.05) * 100) + 1)
+    _slider_max = min(25, int(float(np.sort(_js_mu())[-3]) * 88))
+    _slider_def = max(_slider_min, min(9, _slider_max))
+
     st.markdown("<div class='sb-lbl'>Target Annual Return</div>", unsafe_allow_html=True)
-    r_pct = st.slider("", 6, 14, 9, label_visibility="collapsed",
+    r_pct = st.slider("", _slider_min, _slider_max, _slider_def,
+                      label_visibility="collapsed",
                       help="Annual return you want the optimizer to achieve. Higher targets may concentrate into fewer stocks.")
     r_tgt = r_pct / 100.
     st.markdown(
@@ -459,9 +493,9 @@ with st.sidebar:
     <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);
                 border-radius:10px;padding:12px 14px;font-size:11px;color:#a1a1aa;line-height:1.8">
       <span style="color:{dot_color};font-weight:700">● {dot_label}</span><br>
-      39 HOSE/HNX tickers<br>
+      {META.get('n_tickers', N)} Vietnamese stocks<br>
       {META.get('date_start','2018-01-03')} → {META.get('date_end','2026-04-24')}<br>
-      Risk-free rate: {RFR*100:.1f}% p.a. (VN gov. bond proxy)
+      Risk-free rate: {RFR*100:.1f}% p.a. (SBV reference rate)
     </div>
     """, unsafe_allow_html=True)
 
@@ -624,7 +658,7 @@ else:
 # ── Section 2: Detailed Analysis ─────────────────────────────────────────────
 st.markdown('<div class="section-header">Detailed Analysis</div>', unsafe_allow_html=True)
 
-tw, tf, te = st.tabs(["📊  Holdings", "📈  Risk & Return", "🔬  Math Engine"])
+tw, te = st.tabs(["📊  Holdings", "🔬  Math Engine"])
 
 
 # ════ TAB 1: Holdings ════════════════════════════════════════════════════════
@@ -656,6 +690,7 @@ with tw:
                 height=H, margin=dict(l=0, r=55, t=4, b=20),
                 xaxis=dict(title="Weight (%)", **GRID, color="#a1a1aa"),
                 yaxis=dict(tickfont=dict(family="monospace", color="#fff", size=11), **GRID),
+                transition=dict(duration=700, easing="cubic-in-out"),
                 **CHART_BG,
             )
             st.plotly_chart(fig, use_container_width=True)
@@ -683,7 +718,9 @@ with tw:
             ))
             fig2.update_layout(
                 height=H, margin=dict(l=20, r=80, t=4, b=20),
-                showlegend=False, **CHART_BG,
+                showlegend=False,
+                transition=dict(duration=700, easing="cubic-in-out"),
+                **CHART_BG,
             )
             st.plotly_chart(fig2, use_container_width=True)
 
@@ -781,147 +818,20 @@ with tw:
                 height=320, margin=dict(l=0, r=55, t=4, b=20),
                 xaxis=dict(title="Weight (%)", **GRID, color="#a1a1aa"),
                 yaxis=dict(tickfont=dict(family="monospace", color="#fff", size=11)),
+                transition=dict(duration=700, easing="cubic-in-out"),
                 **CHART_BG,
             )
             st.plotly_chart(fig3, use_container_width=True)
 
 
-# ════ TAB 2: Risk & Return ═══════════════════════════════════════════════════
-with tf:
-    with st.container(border=True):
-        st.markdown(tt(
-            "Efficient Frontier",
-            "Every dot = one optimal portfolio at a specific return target. "
-            "<b>★ = your portfolio</b>. Moving right = more risk; moving up = more return. "
-            "All portfolios lie on the curve — any point below it is suboptimal. "
-            "<b>Blue curve</b> = Reliable zone. <b>Red dashed</b> = Caution zone. "
-            "<b>Gold ◆</b> = Max Sharpe portfolio. "
-            "The dotted line = Capital Market Line from the risk-free rate to the max-Sharpe portfolio.",
-        ), unsafe_allow_html=True)
-
-        with st.spinner("Computing efficient frontier…"):
-            fr = frontier()
-
-        if fr:
-            rel = [p for p in fr if     p["reliable"]]
-            cau = [p for p in fr if not p["reliable"]]
-            ff  = go.Figure()
-
-            # ── Efficient frontier curve ──────────────────────────────────
-            if rel:
-                ff.add_trace(go.Scatter(
-                    x=[p["vol"] for p in rel], y=[p["ret"] for p in rel],
-                    mode="lines+markers",
-                    line=dict(width=2.5, color="#0ea5e9"),
-                    marker=dict(
-                        color=[p["sharpe"] for p in rel], colorscale="Blues", size=7,
-                        colorbar=dict(
-                            title="Sharpe", thickness=10, len=.55,
-                            tickfont=dict(color="#a1a1aa"),
-                            title_font=dict(color="#a1a1aa"),
-                        ),
-                    ),
-                    name="Reliable zone",
-                    hovertemplate="Return: %{y:.1f}%<br>Risk: %{x:.1f}%<extra></extra>",
-                ))
-            if cau:
-                ff.add_trace(go.Scatter(
-                    x=[p["vol"] for p in cau], y=[p["ret"] for p in cau],
-                    mode="lines+markers",
-                    line=dict(width=2, color="#ef4444", dash="dot"),
-                    marker=dict(color="#ef4444", size=7, symbol="circle-open",
-                                line=dict(width=1.5)),
-                    name="Caution zone",
-                    hovertemplate="Return: %{y:.1f}%<br>Risk: %{x:.1f}%<extra></extra>",
-                ))
-
-            # ── Capital Market Line: from risk-free to tangency only ──────
-            best      = max(fr, key=lambda p: p["sharpe"])
-            tan_v     = best["vol"]   # tangency portfolio volatility
-            tan_r     = best["ret"]   # tangency portfolio return
-            # extend slightly past tangency for clarity
-            cml_v_end = tan_v * 1.08
-            cml_r_end = RFR * 100 + best["sharpe"] * cml_v_end
-            ff.add_trace(go.Scatter(
-                x=[0, cml_v_end], y=[RFR * 100, cml_r_end],
-                mode="lines",
-                line=dict(color="rgba(56,189,248,.45)", width=1.5, dash="dot"),
-                name="Capital Market Line",
-                hoverinfo="skip",
-            ))
-
-            # ── Risk-free rate anchor point ───────────────────────────────
-            ff.add_trace(go.Scatter(
-                x=[0], y=[RFR * 100],
-                mode="markers+text",
-                marker=dict(color="#34d399", size=10, symbol="diamond"),
-                text=[f"  Risk-free {RFR*100:.1f}%"],
-                textposition="middle right",
-                textfont=dict(color="#34d399", size=11),
-                name="Risk-free rate",
-                hovertemplate=f"Risk-free rate: {RFR*100:.1f}%<extra></extra>",
-            ))
-
-            # ── Tangency portfolio marker ─────────────────────────────────
-            ff.add_trace(go.Scatter(
-                x=[tan_v], y=[tan_r],
-                mode="markers",
-                marker=dict(color="#f59e0b", size=12, symbol="diamond",
-                            line=dict(color="#fff", width=1.5)),
-                name="Max Sharpe",
-                hovertemplate=(
-                    f"Max Sharpe: {best['sharpe']:.2f}<br>"
-                    f"Return: {tan_r:.1f}%<br>"
-                    f"Risk: {tan_v:.1f}%<extra></extra>"
-                ),
-            ))
-
-            # ── User portfolio star ───────────────────────────────────────
-            ff.add_trace(go.Scatter(
-                x=[R["port_vol"] * 100], y=[R["port_ret"] * 100],
-                mode="markers",
-                marker=dict(color="#fff", size=18, symbol="star",
-                            line=dict(color="#38bdf8", width=2)),
-                name="Your portfolio",
-                hovertemplate=(
-                    f"<b>Your Portfolio</b><br>"
-                    f"Return: {R['port_ret']*100:.1f}%<br>"
-                    f"Risk: {R['port_vol']*100:.1f}%<br>"
-                    f"Sharpe: {R['sharpe']:.2f}<extra></extra>"
-                ),
-            ))
-
-            # ── x-axis: show from 0 so CML anchor is visible ─────────────
-            max_v = max(p["vol"] for p in fr) * 1.1
-            ff.update_layout(
-                height=480,
-                xaxis=dict(title="Annualised Volatility (%)", range=[0, max_v],
-                           **GRID, color="#a1a1aa"),
-                yaxis=dict(title="Annualised Return (%)", **GRID, color="#a1a1aa"),
-                legend=dict(orientation="h", y=-0.14, x=0, font=dict(color="#fff", size=11)),
-                margin=dict(l=0, r=0, t=4, b=40),
-                **CHART_BG,
-            )
-            st.plotly_chart(ff, use_container_width=True)
-
-        st.markdown("""
-        <div style="font-size:12px;color:#6b7280;padding:0 4px">
-          <b style="color:#a1a1aa">How to read this chart:</b>
-          Ideal portfolios are top-left (high return, low risk).
-          Your ★ sits on or near the curve — if it's below, re-run the optimizer.
-          The dotted line shows the best risk/return trade-off through the risk-free rate.
-        </div>
-        """, unsafe_allow_html=True)
-
-
-# ════ TAB 3: Math Engine ══════════════════════════════════════════════════════
+# ════ TAB 2: Math Engine ══════════════════════════════════════════════════════
 with te:
     st.markdown("""
     <div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.2);
                 border-radius:12px;padding:16px 20px;margin-bottom:20px;
                 font-size:13px;color:#bae6fd;line-height:1.75">
       <b>What is happening under the hood?</b><br>
-      The covariance matrix Σ captures how 39 stocks move together.
+      The covariance matrix Σ captures how all 39 Vietnamese stocks move together.
       We decompose it into <b>eigenvalues</b> (how much variance each direction carries)
       and <b>eigenvectors</b> (the directions themselves).
       Eigenvalues above the <b>Marchenko-Pastur threshold</b> represent genuine market structure —
@@ -979,6 +889,7 @@ with te:
             yaxis=dict(title="Magnitude",         **GRID, color="#a1a1aa"),
             showlegend=False,
             margin=dict(l=0, r=0, t=4, b=40),
+            transition=dict(duration=600, easing="cubic-in-out"),
             **CHART_BG,
         )
         st.plotly_chart(fe, use_container_width=True)
@@ -1051,6 +962,7 @@ with te:
             yaxis=dict(title="Annual Return (%)", **GRID, color="#a1a1aa"),
             legend=dict(orientation="h", y=1.1, font=dict(color="#fff", size=12)),
             margin=dict(l=0, r=0, t=30, b=60),
+            transition=dict(duration=600, easing="cubic-in-out"),
             **CHART_BG,
         )
         st.plotly_chart(js_fig, use_container_width=True)
