@@ -20,3 +20,10 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+# Node (PPTX conversion helper)
+node_modules/
+package-lock.json
+
+# Temp files
+_poster_shot.png
