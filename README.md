@@ -10,7 +10,8 @@ that achieves that target — no black-box ML, every number is traceable to a cl
 
 ## Poster
 
-![Vietnam Stock Portfolio Optimizer Poster](_poster_shot.png)
+<img width="1470" height="824" alt="image" src="https://github.com/user-attachments/assets/c8e77626-e98b-4061-b240-eaab29e083a4" />
+
 
 ---
 
