@@ -4,6 +4,14 @@ A quantitative portfolio optimization engine built from linear algebra fundament
 Given an investor's target annual return, the system finds the **minimum-risk portfolio**
 that achieves that target — no black-box ML, every number is traceable to a closed-form formula.
 
+**[Live Demo →](https://vn-portfolio-optimizer-group21-8bd57avncvdbsm3wkupddr.streamlit.app/)**
+
+---
+
+## Poster
+
+![Vietnam Stock Portfolio Optimizer Poster](_poster_shot.png)
+
 ---
 
 ## The Problem
